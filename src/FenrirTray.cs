@@ -844,6 +844,21 @@ namespace GWMouseBattery
 
     internal sealed class TrayContext : ApplicationContext
     {
+        /// <summary>当前实例。供未处理异常时摘掉托盘图标用（避免留下僵尸图标）。</summary>
+        private static TrayContext _current;
+
+        /// <summary>
+        /// 把当前实例的托盘图标摘掉。进程即将异常终止时调用 —— 带异常退出的进程
+        /// 来不及走正常清理，Windows 会把图标留在通知区域，变成一个点不动、
+        /// 也不会自己消失的僵尸图标。
+        /// </summary>
+        public static void HideCurrentIcon()
+        {
+            TrayContext c = _current;
+            if (c == null) return;
+            try { if (c._tray != null) c._tray.Visible = false; } catch { }
+        }
+
         private readonly HostForm _host;
         private readonly NotifyIcon _tray;
         private readonly System.Windows.Forms.Timer _timer;
@@ -876,6 +891,7 @@ namespace GWMouseBattery
         public TrayContext(AppSettings settings)
         {
             _settings = settings;
+            _current = this;
 
             // 隐藏宿主窗口：既给 BeginInvoke 提供句柄，也用来接收"用户又点了一次启动"
             HostForm host = new HostForm();
@@ -1719,6 +1735,7 @@ namespace GWMouseBattery
             try { _tray.Dispose(); } catch { }
             try { _host.Dispose(); } catch { }
 
+            _current = null;
             ExitThread();
         }
 
@@ -2403,6 +2420,69 @@ namespace GWMouseBattery
         }
 
         /// <summary>
+        /// 尝试唤醒已运行的实例：先立刻试一次（正常情况第一次就中），再每隔 500 毫秒
+        /// 重试若干次 —— 对方可能正在读设备，或者还在启动、尚未建好宿主窗口。
+        /// 成功返回 true，调用方此时应当安静退出。
+        /// </summary>
+        private static bool TryWakeWithRetries()
+        {
+            for (int i = 0; i < 9; i++)
+            {
+                if (i > 0) Thread.Sleep(500);
+                if (WakeRunningInstance())
+                {
+                    DebugLog.Write("woke the running instance (attempt " + (i + 1) + ")");
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 礼貌地请其它同名实例自己退出：给它发 Quit 消息，然后等它退干净。
+        /// 走正常退出流程的实例会先摘掉自己的托盘图标，所以不会留下僵尸图标。
+        /// 返回真正退出的实例数；对方不理人时返回 0，由调用方决定是否强杀。
+        /// </summary>
+        private static int AskOtherInstancesToQuit()
+        {
+            if (WindowMessages.Quit == 0) return 0;
+
+            IntPtr host = FindRunningHost();
+            if (host == IntPtr.Zero) return 0;
+
+            try { Native.PostMessageW(host, WindowMessages.Quit, IntPtr.Zero, IntPtr.Zero); }
+            catch { return 0; }
+
+            System.Diagnostics.Process self = System.Diagnostics.Process.GetCurrentProcess();
+
+            // 最多等 2.5 秒，看它有没有自己走完退出流程
+            for (int i = 0; i < 10; i++)
+            {
+                Thread.Sleep(250);
+
+                int alive = 0;
+                try
+                {
+                    foreach (System.Diagnostics.Process q in
+                        System.Diagnostics.Process.GetProcessesByName(self.ProcessName))
+                    {
+                        if (q.Id != self.Id) alive++;
+                    }
+                }
+                catch { return 0; }
+
+                if (alive == 0)
+                {
+                    DebugLog.Write("the other instance exited gracefully");
+                    return 1;
+                }
+            }
+
+            DebugLog.Write("the other instance ignored the quit request");
+            return 0;
+        }
+
+        /// <summary>
         /// 结束其它同名实例（不含自己）。只在"互斥体被占、又找不到它的窗口"时用，
         /// 目的是避免用户看到两个托盘图标，也避免新版旧版同时跑。
         /// 没有权限就返回 0，调用方照样继续启动。
@@ -2466,27 +2546,51 @@ namespace GWMouseBattery
 
             if (!created)
             {
-                // 互斥体被占了，但没找到它的窗口（旧版本没有具名宿主窗口时会这样，
-                // 也可能是对方还在启动过程中）。先多试几次唤醒，别急着动手；
-                // 确实唤不动才把旧实例收掉，保证最后只有一个图标。
-                for (int i = 0; i < 3; i++)
+                // 已经有实例在跑了。处理顺序很重要：
+                //
+                //   1) 先唤醒它（正常情况第一步就成功，本进程安静退出，不显示任何图标）
+                //   2) 唤不动就**礼貌请它自己退出** —— 它会走正常退出流程，
+                //      顺带把托盘图标摘掉
+                //   3) 只有它彻底不理人（卡死）才强杀
+                //
+                // 为什么不能一上来就强杀：被强杀的进程来不及执行"移除托盘图标"，
+                // Windows 也不会因为进程死了就自动清理那个图标，于是通知区域会留下
+                // 一个点不动、也不会自己消失的"僵尸图标"。用户会看到两个图标，
+                // 而且关掉真正在工作的那个之后就再也没有电量显示了。
+                if (TryWakeWithRetries())
                 {
-                    Thread.Sleep(600);
-                    if (WakeRunningInstance())
-                    {
-                        Cli.Write("G-Wolves 鼠标电量已经在运行了。已让托盘程序打开详情窗口。");
-                        Cli.Flush();
-                        return 0;
-                    }
+                    Cli.Write("G-Wolves 鼠标电量已经在运行了。已让托盘程序打开详情窗口。");
+                    Cli.Flush();
+                    return 0;
                 }
 
-                int killed = KillOtherInstances();
-                DebugLog.Write("stale instance cleanup: killed=" + killed);
-                if (killed > 0) Thread.Sleep(600);
+                if (AskOtherInstancesToQuit() == 0)
+                {
+                    int killed = KillOtherInstances();
+                    DebugLog.Write("forced kill of unresponsive instance(s): " + killed);
+                    if (killed > 0) Thread.Sleep(600);
+                }
             }
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+
+            // 托盘模式下，任何未处理异常都必须先把托盘图标摘掉再退出。
+            // 否则进程一崩，Windows 会把图标留在通知区域，变成一个点不动、
+            // 也不会自己消失的"僵尸图标" —— 看起来就像程序还在运行。
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            Application.ThreadException += delegate(object sender, ThreadExceptionEventArgs e)
+            {
+                DebugLog.Write("UNHANDLED UI EXCEPTION: " + e.Exception);
+                TrayContext.HideCurrentIcon();
+                Environment.Exit(1);
+            };
+            AppDomain.CurrentDomain.UnhandledException += delegate(object sender, UnhandledExceptionEventArgs e)
+            {
+                DebugLog.Write("UNHANDLED EXCEPTION: " + e.ExceptionObject);
+                TrayContext.HideCurrentIcon();
+            };
+
             Application.Run(new TrayContext(AppSettings.Load()));
 
             GC.KeepAlive(mutex);
