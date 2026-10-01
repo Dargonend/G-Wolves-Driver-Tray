@@ -1,5 +1,5 @@
 ﻿// ============================================================================
-//  GWMouseBattery - 核心层
+//  G-Wolves Driver Tray - 核心层
 //  G-Wolves 无线鼠标电量读取（原生 HID，不依赖浏览器 / WebHID / 官方驱动）
 //
 //  协议来源：mouse.xyz / mouse.pink 网页驱动的公开 JS bundle，已有公开整理：
@@ -18,7 +18,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 
-namespace GWMouseBattery
+namespace GWolvesDriverTray
 {
     #region Win32
 
@@ -309,6 +309,7 @@ namespace GWMouseBattery
         public const int LodAddress = 10;            // 静默高度
         public const int DpiValueAddress = 12;       // 3950 传感器：每档 4 字节
         public const int Sensor3955DpiAddress = 6912; // 3955 传感器：每档 6 字节
+        public const int CompetitiveModeAddress = 225;  // 竞技模式（网页驱动内部叫 SensorFPS20K）
 
         public static bool SpdtLeft(int keyOperationLowByte)
         {
@@ -1219,6 +1220,22 @@ namespace GWMouseBattery
 
     #region SPDT（左/右键的开关状态，存在鼠标 EEPROM 地址 8）
 
+
+    /// <summary>一个「单字节设置」的读取结果（地址 addr 存值，addr+1 是设备维护的 85-v 补数）。</summary>
+    internal sealed class ByteSetting
+    {
+        public bool Ok;
+        public int Value = -1;
+        public int Address;
+        public string Error = "";
+        public byte[] Raw;
+
+        public string Describe()
+        {
+            if (!Ok) return "读取失败：" + Error;
+            return Value + "（EEPROM[" + Address + "] = 0x" + Value.ToString("X2") + "）";
+        }
+    }
     internal sealed class SpdtState
     {
         public bool Ok;
@@ -1681,6 +1698,84 @@ namespace GWMouseBattery
             return false;
         }
 
+        /// <summary>
+        /// 响应高度（LOD）的档位名称。写进 EEPROM 地址 10 的值就是 1..N ——
+        /// 这是网页驱动里的算法：当 LOD 列表长度大于 3 时，写「该档在列表里的序号 + 1」。
+        /// 本机机型在 env-models.json 里的 LOD 是 "0.7;0.9;1.2;1.4;1.6"，共 5 档。
+        /// </summary>
+        public static readonly string[] LodLabels = new string[]
+        {
+            "0.7 mm", "0.9 mm", "1.2 mm", "1.4 mm", "1.6 mm"
+        };
+
+        public static bool IsValidLod(int v)
+        {
+            return v >= 1 && v <= LodLabels.Length;
+        }
+
+        public static string LodLabel(int v)
+        {
+            if (!IsValidLod(v)) return "未知（写入值 " + v + "）";
+            return LodLabels[v - 1];
+        }
+
+        /// <summary>读一个「单字节 + 补数」的设置。</summary>
+        public static bool ReadByteSetting(HidInterface item, int address, out ByteSetting result)
+        {
+            result = new ByteSetting();
+            result.Address = address;
+
+            byte[] reply;
+            string error;
+            if (!BatteryClient.ExchangeCompx(item,
+                    CompxProtocol.BuildEepromRead(address, 2), out reply, out error))
+            {
+                result.Error = error;
+                return false;
+            }
+
+            result.Raw = reply;
+
+            // compx 回复布局：raw[0]=报告 ID，raw[1]=命令 echo，数据从 raw[6] 开始
+            if (reply.Length < 7)
+            {
+                result.Error = "回复太短：" + Util.Hex(reply, reply.Length);
+                return false;
+            }
+
+            result.Value = reply[6];
+            result.Ok = true;
+            return true;
+        }
+
+        /// <summary>写一个「单字节 + 补数」的设置，写完立刻回读校验。</summary>
+        public static bool WriteByteSetting(HidInterface item, int address, int value, out string error)
+        {
+            error = "";
+
+            byte[] reply;
+            if (!BatteryClient.ExchangeCompx(item,
+                    CompxProtocol.BuildEepromWrite(address, value, 2), out reply, out error))
+                return false;
+
+            Thread.Sleep(150);
+
+            ByteSetting check;
+            if (!ReadByteSetting(item, address, out check))
+            {
+                error = "回读失败：" + check.Error;
+                return false;
+            }
+
+            if (check.Value != value)
+            {
+                error = "回读不一致：写入 " + value + "，读到 " + check.Value;
+                return false;
+            }
+
+            return true;
+        }
+
         public static RateInfo ReadRate(HidInterface item)
         {
             RateInfo info = new RateInfo();
@@ -1852,7 +1947,7 @@ namespace GWMouseBattery
                     dir = null;
                 }
                 if (string.IsNullOrEmpty(dir)) dir = ".";
-                dir = System.IO.Path.Combine(dir, "GWMouseBattery");
+                dir = System.IO.Path.Combine(dir, "G-Wolves-Driver-Tray");
                 return System.IO.Path.Combine(dir, "settings.ini");
             }
         }
@@ -1941,7 +2036,7 @@ namespace GWMouseBattery
             // 一律走 Cli.Write：这样 --out 才能把自检结果也一起抓到文件里，
             // 否则用 "start /wait ... --out file" 拿到的是个空文件。
             Cli.Blank();
-            Cli.Write("  G-Wolves 鼠标电量 · 核心逻辑自检（不访问硬件）");
+            Cli.Write("  G-Wolves Driver Tray · 核心逻辑自检（不访问硬件）");
             Cli.Blank();
 
             // ---- compx 帧 ----
@@ -2076,6 +2171,15 @@ namespace GWMouseBattery
                 CompxProtocol.SpdtLeft(3) && CompxProtocol.SpdtRight(3), "03");
             Check("SPDT 高位不影响判定",
                 CompxProtocol.SpdtLeft(0xF1) && CompxProtocol.SpdtRight(0xF2), "F1/F2");
+
+            // ---- 响应高度 / 竞技模式的映射 ----
+            Check("LOD 共 5 档", MouseSettings.LodLabels.Length == 5, MouseSettings.LodLabels.Length.ToString());
+            Check("LOD 1 -> 0.7 mm", MouseSettings.LodLabel(1) == "0.7 mm", MouseSettings.LodLabel(1));
+            Check("LOD 5 -> 1.6 mm", MouseSettings.LodLabel(5) == "1.6 mm", MouseSettings.LodLabel(5));
+            Check("LOD 0 非法", !MouseSettings.IsValidLod(0), "0");
+            Check("LOD 6 非法", !MouseSettings.IsValidLod(6), "6");
+            Check("响应高度地址 = 10", CompxProtocol.LodAddress == 10, CompxProtocol.LodAddress.ToString());
+            Check("竞技模式地址 = 225", CompxProtocol.CompetitiveModeAddress == 225, CompxProtocol.CompetitiveModeAddress.ToString());
 
             // ---- DPI 编码（对照 docs/协议说明.md 里的字节验算）----
             Check("DPI 1200 -> AF 04 AF 04 00 EF",

@@ -1,5 +1,5 @@
-# ============================================================================
-#  GWMouseBattery - build script
+﻿# ============================================================================
+#  G-Wolves Driver Tray - build script
 #
 #  ASCII only on purpose: cmd.exe / PowerShell 5.1 reinterpret non-ASCII bytes
 #  in scripts according to the current code page, which silently corrupts them.
@@ -22,7 +22,7 @@ $root = $Root
 if (-not $root) { $root = $PSScriptRoot }
 if (-not $root) { $root = Split-Path -Parent $MyInvocation.MyCommand.Path }
 $outDir = Join-Path $root 'bin'
-$outExe = Join-Path $outDir 'GWMouseBattery.exe'
+$outExe = Join-Path $outDir 'G-Wolves-Driver-Tray.exe'
 
 $sources = @(
     (Join-Path $root 'src\FenrirCore.cs'),

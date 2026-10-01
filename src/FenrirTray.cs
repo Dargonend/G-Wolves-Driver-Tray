@@ -1,5 +1,5 @@
 ﻿// ============================================================================
-//  GWMouseBattery - 托盘界面层
+//  G-Wolves Driver Tray - 托盘界面层
 //
 //  设计要点：
 //   * 所有 HID 读写都在线程池线程上做，UI 线程永不阻塞（设备卡住也不会让界面假死）
@@ -19,7 +19,7 @@ using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
-namespace GWMouseBattery
+namespace GWolvesDriverTray
 {
     #region 调试日志（--log）
 
@@ -416,7 +416,7 @@ namespace GWMouseBattery
 
         public DetailsForm()
         {
-            Text = "G-Wolves 鼠标电量";
+            Text = "G-Wolves Driver Tray";
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -538,7 +538,7 @@ namespace GWMouseBattery
             {
                 string s = Util.StateText(percent);
                 if (charging) s = "充电中（" + s + "）";
-                _state.Text = percent >= 0 ? "G-Wolves 鼠标：" + s : "还没有读到数据";
+                _state.Text = percent >= 0 ? "G-Wolves Driver Tray：" + s : "还没有读到数据";
             }
 
             _state.ForeColor = percent >= 0
@@ -675,7 +675,7 @@ namespace GWMouseBattery
         private void SaveToFile()
         {
             SaveFileDialog dlg = new SaveFileDialog();
-            dlg.FileName = "gwmouse-diagnostics.txt";
+            dlg.FileName = "gwtray-diagnostics.txt";
             dlg.Filter = "文本文件|*.txt|所有文件|*.*";
             if (dlg.ShowDialog(this) == DialogResult.OK)
             {
@@ -714,7 +714,7 @@ namespace GWMouseBattery
         public static string BuildReport()
         {
             StringBuilder sb = new StringBuilder();
-            sb.AppendLine("G-Wolves 鼠标电量 · 诊断报告  " + VersionText);
+            sb.AppendLine("G-Wolves Driver Tray · 诊断报告  " + VersionText);
             sb.AppendLine("时间: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
             sb.AppendLine("系统: " + Environment.OSVersion.VersionString
                 + " / " + (Environment.Is64BitProcess ? "64" : "32") + " 位进程");
@@ -806,10 +806,10 @@ namespace GWMouseBattery
     internal static class WindowMessages
     {
         /// <summary>隐藏宿主窗口的标题，FindWindow 靠它找到已有实例。</summary>
-        public const string HostWindowTitle = "GWMouseBattery.HostWindow";
+        public const string HostWindowTitle = "G-Wolves-Driver-Tray.HostWindow";
 
-        private const string WakeName = "GWMouseBattery.ShowDetails.v1";
-        private const string QuitName = "GWMouseBattery.Quit.v1";
+        private const string WakeName = "G-Wolves-Driver-Tray.ShowDetails.v1";
+        private const string QuitName = "G-Wolves-Driver-Tray.Quit.v1";
 
         public static readonly uint Wake = Native.RegisterWindowMessageW(WakeName);
         public static readonly uint Quit = Native.RegisterWindowMessageW(QuitName);
@@ -876,6 +876,8 @@ namespace GWMouseBattery
         private BatteryReading _lastGood;
         private bool _hintShown;
         private SpdtState _spdt;
+        private ByteSetting _lod;
+        private ByteSetting _competitive;
         private DpiInfo _dpi;
         private RateInfo _rate;
         private DateTime _settingsStamp = DateTime.MinValue;
@@ -892,6 +894,9 @@ namespace GWMouseBattery
         {
             _settings = settings;
             _current = this;
+
+            // 改名迁移：老的自启文件指向已经不存在的 exe 名，换成新的
+            AutoStart.MigrateLegacy();
 
             // 隐藏宿主窗口：既给 BeginInvoke 提供句柄，也用来接收"用户又点了一次启动"
             HostForm host = new HostForm();
@@ -921,7 +926,7 @@ namespace GWMouseBattery
             _tray = new NotifyIcon();
             _tray.Visible = true;
             _tray.Icon = BatteryIconRenderer.Get(-1, false, _settings.IconStyle);
-            _tray.Text = "G-Wolves 鼠标电量：正在读取…";
+            _tray.Text = "G-Wolves Driver Tray：正在读取…";
             _tray.MouseClick += OnTrayClick;
             _tray.ContextMenuStrip = BuildMenu();
 
@@ -1041,6 +1046,37 @@ namespace GWMouseBattery
 
             menu.Items.Add(rateMenu);
 
+            // ---- 响应高度（LOD）：写进 EEPROM 地址 10 的值就是 1..5 档 ----
+            ToolStripMenuItem lodMenu = new ToolStripMenuItem("响应高度（LOD）");
+            lodMenu.Tag = "lod";
+
+            for (int i = 0; i < MouseSettings.LodLabels.Length; i++)
+            {
+                int captured = i + 1;
+                ToolStripMenuItem item = new ToolStripMenuItem(MouseSettings.LodLabels[i]);
+                item.Tag = "lod:" + captured;
+                item.Click += delegate { ApplyLod(captured); };
+                lodMenu.DropDownItems.Add(item);
+            }
+
+            lodMenu.DropDownItems.Add(new ToolStripSeparator());
+
+            ToolStripMenuItem lodReload = new ToolStripMenuItem("重新读取");
+            lodReload.Click += delegate { RefreshSettings(true); };
+            lodMenu.DropDownItems.Add(lodReload);
+
+            menu.Items.Add(lodMenu);
+
+            // ---- 竞技模式：EEPROM 地址 225，0/1 ----
+            ToolStripMenuItem compItem = new ToolStripMenuItem("竞技模式");
+            compItem.Tag = "competitive";
+            compItem.Click += delegate
+            {
+                bool now = _competitive != null && _competitive.Ok && _competitive.Value == 1;
+                ToggleCompetitive(!now);
+            };
+            menu.Items.Add(compItem);
+
             menu.Items.Add(new ToolStripSeparator());
 
             ToolStripMenuItem interval = new ToolStripMenuItem("刷新间隔");
@@ -1093,7 +1129,7 @@ namespace GWMouseBattery
 
                 if (!ok)
                 {
-                    MessageBox.Show("设置失败：" + error, "G-Wolves 鼠标电量",
+                    MessageBox.Show("设置失败：" + error, "G-Wolves Driver Tray",
                         MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
             };
@@ -1157,6 +1193,30 @@ namespace GWMouseBattery
                         item.Text = have
                             ? "灵敏度（DPI）    " + _dpi.CurrentDpi + " DPI"
                             : "灵敏度（DPI）（未读到）";
+                        item.Enabled = have && !_settingsBusy;
+                    }
+                    else if (tag == "lod")
+                    {
+                        bool have = _lod != null && _lod.Ok;
+                        item.Text = have
+                            ? "响应高度（LOD）    " + MouseSettings.LodLabel(_lod.Value)
+                            : "响应高度（LOD）（未读到）";
+                        item.Enabled = have && !_settingsBusy;
+                    }
+                    else if (tag.StartsWith("lod:", StringComparison.Ordinal))
+                    {
+                        int lodValue;
+                        if (int.TryParse(tag.Substring(4), out lodValue))
+                            item.Checked = _lod != null && _lod.Ok && _lod.Value == lodValue;
+                    }
+                    else if (tag == "competitive")
+                    {
+                        bool have = _competitive != null && _competitive.Ok;
+                        bool on = have && _competitive.Value == 1;
+                        item.Checked = on;
+                        item.Text = have
+                            ? "竞技模式    " + (on ? "开" : "关")
+                            : "竞技模式（未读到）";
                         item.Enabled = have && !_settingsBusy;
                     }
                     else if (tag == "rate")
@@ -1233,16 +1293,26 @@ namespace GWMouseBattery
                     dpi.Error = ex.GetType().Name + ": " + ex.Message;
                 }
 
+                ByteSetting lod = new ByteSetting();
+                ByteSetting comp = new ByteSetting();
+
+                try { MouseSettings.ReadByteSetting(device, CompxProtocol.LodAddress, out lod); }
+                catch (Exception ex) { lod = new ByteSetting(); lod.Error = ex.GetType().Name + ": " + ex.Message; }
+
+                try { MouseSettings.ReadByteSetting(device, CompxProtocol.CompetitiveModeAddress, out comp); }
+                catch (Exception ex) { comp = new ByteSetting(); comp.Error = ex.GetType().Name + ": " + ex.Message; }
+
                 try
                 {
-                    _host.BeginInvoke(new Action<SpdtState, RateInfo, DpiInfo>(OnSettingsRead),
-                        spdt, rate, dpi);
+                    _host.BeginInvoke(new Action<SpdtState, RateInfo, DpiInfo, ByteSetting, ByteSetting>(OnSettingsRead),
+                        spdt, rate, dpi, lod, comp);
                 }
                 catch { _settingsBusy = false; }
             });
         }
 
-        private void OnSettingsRead(SpdtState spdt, RateInfo rate, DpiInfo dpi)
+        private void OnSettingsRead(SpdtState spdt, RateInfo rate, DpiInfo dpi,
+            ByteSetting lod, ByteSetting comp)
         {
             _settingsBusy = false;
             _settingsStamp = DateTime.Now;
@@ -1250,6 +1320,8 @@ namespace GWMouseBattery
             if (spdt != null && spdt.Ok) _spdt = spdt; else if (_spdt == null) _spdt = spdt;
             if (rate != null && rate.Ok) _rate = rate; else if (_rate == null) _rate = rate;
             if (dpi != null && dpi.Ok) _dpi = dpi; else if (_dpi == null) _dpi = dpi;
+            if (lod != null && lod.Ok) _lod = lod; else if (_lod == null) _lod = lod;
+            if (comp != null && comp.Ok) _competitive = comp; else if (_competitive == null) _competitive = comp;
 
             DebugLog.Write("settings read -> " + (spdt == null ? "null" : spdt.Describe())
                 + " | 回报率 " + (rate != null && rate.Hz > 0
@@ -1257,7 +1329,9 @@ namespace GWMouseBattery
                     : "未知(0x" + (rate != null && rate.Code >= 0 ? rate.Code.ToString("X2") : "??") + ")")
                 + " | " + (dpi != null && dpi.Ok
                     ? dpi.CurrentDpi + " DPI（档 " + (dpi.CurrentStage + 1) + "/" + dpi.StageCount + "）"
-                    : "DPI 未读到"));
+                    : "DPI 未读到")
+                + " | LOD " + (lod != null && lod.Ok ? MouseSettings.LodLabel(lod.Value) : "未读到")
+                + " | 竞技模式 " + (comp != null && comp.Ok ? (comp.Value == 1 ? "开" : "关") : "未读到"));
         }
 
         /// <summary>把当前档的灵敏度改成 dpi（先读-改-写，写完回读校验）。</summary>
@@ -1344,6 +1418,76 @@ namespace GWMouseBattery
             });
         }
 
+        /// <summary>把响应高度改成 1..5（写 EEPROM 地址 10，写完回读校验）。</summary>
+        private void ApplyLod(int value)
+        {
+            if (_settingsBusy) return;
+
+            if (_device == null || _device.Kind != ProtocolKind.Compx)
+            {
+                ShowBalloon("暂时改不了响应高度", "需要一台 compx 设备（17 字节报文）。", ToolTipIcon.Warning);
+                return;
+            }
+
+            if (!MouseSettings.IsValidLod(value))
+            {
+                ShowBalloon("响应高度取值无效", "只支持 1 ~ " + MouseSettings.LodLabels.Length + "。", ToolTipIcon.Warning);
+                return;
+            }
+
+            _settingsBusy = true;
+            HidInterface device = _device;
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                bool ok = false;
+                string error = "";
+                try { ok = MouseSettings.WriteByteSetting(device, CompxProtocol.LodAddress, value, out error); }
+                catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+
+                try
+                {
+                    _host.BeginInvoke(new Action<bool, int, string, string>(OnSettingWritten),
+                        ok, value, error, "响应高度（LOD）");
+                }
+                catch { _settingsBusy = false; }
+            });
+        }
+
+        /// <summary>开/关竞技模式（EEPROM 地址 225，1=开 0=关）。</summary>
+        private void ToggleCompetitive(bool target)
+        {
+            if (_settingsBusy) return;
+
+            if (_device == null || _device.Kind != ProtocolKind.Compx)
+            {
+                ShowBalloon("暂时改不了竞技模式", "需要一台 compx 设备（17 字节报文）。", ToolTipIcon.Warning);
+                return;
+            }
+
+            _settingsBusy = true;
+            HidInterface device = _device;
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                bool ok = false;
+                string error = "";
+                try
+                {
+                    ok = MouseSettings.WriteByteSetting(device, CompxProtocol.CompetitiveModeAddress,
+                        target ? 1 : 0, out error);
+                }
+                catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+
+                try
+                {
+                    _host.BeginInvoke(new Action<bool, int, string, string>(OnSettingWritten),
+                        ok, target ? 1 : 0, error, "竞技模式");
+                }
+                catch { _settingsBusy = false; }
+            });
+        }
+
         private void ApplySettingsNow()
         {
             if (_settingsBusy || _device == null) return;
@@ -1371,14 +1515,18 @@ namespace GWMouseBattery
         {
             _settingsBusy = false;
 
-            string unit = what == "回报率" ? " Hz" : " DPI";
+            string shown;
+            if (what == "回报率") shown = value + " Hz";
+            else if (what == "响应高度（LOD）") shown = MouseSettings.LodLabel(value);
+            else if (what == "竞技模式") shown = (value == 1 ? "开" : "关");
+            else shown = value + " DPI";
 
             if (ok)
             {
                 if (what == "重新加载")
                     ShowBalloon("配置已重新加载", "鼠标已重新读取设置，刚改的应该生效了。", ToolTipIcon.Info);
                 else
-                    ShowBalloon(what + "已设置", what + " 现在是 " + value + unit + "。", ToolTipIcon.Info);
+                    ShowBalloon(what + "已设置", what + " 现在是 " + shown + "。", ToolTipIcon.Info);
             }
             else
             {
@@ -1386,7 +1534,7 @@ namespace GWMouseBattery
                     ShowBalloon("重新加载失败", error, ToolTipIcon.Warning);
                 else
                     ShowBalloon(what + "设置失败",
-                        what + " 改成 " + value + unit + " 没成功。\n" + error, ToolTipIcon.Warning);
+                        what + " 改成 " + shown + " 没成功。\n" + error, ToolTipIcon.Warning);
             }
 
             DebugLog.Write("setting written: " + what + " value=" + value + " ok=" + ok
@@ -1681,11 +1829,11 @@ namespace GWMouseBattery
 
         private string BuildTooltip(BatteryReading reading, int percent, bool charging, bool stale)
         {
-            if (reading == null) return "G-Wolves 鼠标电量：读取中…";
+            if (reading == null) return "G-Wolves Driver Tray：读取中…";
 
             if (percent >= 0)
             {
-                string line = "G-Wolves 鼠标 " + percent + "%";
+                string line = "G-Wolves Driver Tray " + percent + "%";
                 if (stale) line += "（" + AgeText() + "）";
                 else line += charging ? "（充电中）" : "（未充电）";
 
@@ -1693,7 +1841,7 @@ namespace GWMouseBattery
                 return Clip(line);
             }
 
-            string text = "G-Wolves 鼠标：读不到电量";
+            string text = "G-Wolves Driver Tray：读不到电量";
             if (!string.IsNullOrEmpty(reading.Error)) text += "（" + reading.Error + "）";
             return Clip(text);
         }
@@ -1756,7 +1904,11 @@ namespace GWMouseBattery
 
     internal static class AutoStart
     {
-        private const string FileName = "GWMouseBattery.cmd";
+        private const string FileName = "G-Wolves-Driver-Tray.cmd";
+
+        /// <summary>程序改名之前用的自启文件名。它里面写的是老 exe 的完整路径，
+        /// 改名之后那个 exe 已经不存在了，留着只会在每次开机时静默失败一次。</summary>
+        private const string LegacyFileName = "GWMouseBattery.cmd";
 
         private static string Folder
         {
@@ -1770,6 +1922,27 @@ namespace GWMouseBattery
         private static string FilePath
         {
             get { return System.IO.Path.Combine(Folder, FileName); }
+        }
+
+        /// <summary>把改名之前留下的自启项迁移过来：它还在，说明用户当初勾了开机自启，
+        /// 那就用新名字重写一份（指向当前 exe），用户不用重新勾一次。</summary>
+        public static void MigrateLegacy()
+        {
+            try
+            {
+                string legacy = System.IO.Path.Combine(Folder, LegacyFileName);
+                if (!System.IO.File.Exists(legacy)) return;
+
+                if (System.IO.File.Exists(FilePath))
+                {
+                    System.IO.File.Delete(legacy);
+                    return;
+                }
+
+                string error;
+                if (Enable(out error)) System.IO.File.Delete(legacy);
+            }
+            catch { }
         }
 
         public static bool IsEnabled()
@@ -1793,7 +1966,7 @@ namespace GWMouseBattery
                 string exe = Application.ExecutablePath;
                 StringBuilder sb = new StringBuilder();
                 sb.AppendLine("@echo off");
-                sb.AppendLine("rem 由 GWMouseBattery 自动生成：开机静默启动托盘程序");
+                sb.AppendLine("rem 由 G-Wolves Driver Tray 自动生成：开机静默启动托盘程序");
                 sb.AppendLine("start \"\" \"" + exe + "\" --tray");
                 System.IO.File.WriteAllText(FilePath, sb.ToString(), Encoding.ASCII);
                 return true;
@@ -1831,7 +2004,7 @@ namespace GWMouseBattery
         {
             string exe = Application.ExecutablePath;
             string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-            string target = System.IO.Path.Combine(desktop, "G-Wolves 鼠标电量.lnk");
+            string target = System.IO.Path.Combine(desktop, "G-Wolves Driver Tray.lnk");
 
             try
             {
@@ -1848,7 +2021,7 @@ namespace GWMouseBattery
                 link.InvokeMember("WorkingDirectory", System.Reflection.BindingFlags.SetProperty, null,
                     shortcut, new object[] { System.IO.Path.GetDirectoryName(exe) });
                 link.InvokeMember("Description", System.Reflection.BindingFlags.SetProperty, null,
-                    shortcut, new object[] { "在托盘显示 G-Wolves 鼠标电量" });
+                    shortcut, new object[] { "在托盘显示 G-Wolves Driver Tray" });
                 link.InvokeMember("IconLocation", System.Reflection.BindingFlags.SetProperty, null,
                     shortcut, new object[] { exe + ",0" });
                 link.InvokeMember("Save", System.Reflection.BindingFlags.InvokeMethod, null, shortcut, null);
@@ -1897,7 +2070,7 @@ namespace GWMouseBattery
 
                 if (HasFlag(args, "--version") || HasFlag(args, "-v"))
                 {
-                    Cli.Write("GWMouseBattery " + DiagnosticsForm.VersionText);
+                    Cli.Write("G-Wolves Driver Tray " + DiagnosticsForm.VersionText);
                     Cli.Write("编译于 " + System.IO.File.GetLastWriteTime(
                         System.Reflection.Assembly.GetExecutingAssembly().Location)
                         .ToString("yyyy-MM-dd HH:mm"));
@@ -1937,6 +2110,8 @@ namespace GWMouseBattery
 
                 if (HasFlag(args, "--dpi")) return RunDpi(args);
                 if (HasFlag(args, "--rate")) return RunRate(args);
+                if (HasFlag(args, "--lod")) return RunLod(args);
+                if (HasFlag(args, "--competitive")) return RunCompetitive(args);
 
                 if (HasFlag(args, "--eeprom"))
                 {
@@ -2219,6 +2394,99 @@ namespace GWMouseBattery
             return ok ? 0 : 1;
         }
 
+        /// <summary>--lod              读当前响应高度；--lod &lt;1-5&gt;  设置。</summary>
+        private static int RunLod(string[] args)
+        {
+            int code;
+            HidInterface device = RequireCompx(out code);
+            if (device == null) { Cli.Flush(); return code; }
+
+            Cli.Write("设备：" + device.VidPidHex + "  " + device.KindName);
+
+            string value = ValueOf(args, "--lod");
+            int lod = 0;
+            bool parsed = !string.IsNullOrEmpty(value) && int.TryParse(value, out lod);
+
+            if (!parsed)
+            {
+                ByteSetting s;
+                if (!MouseSettings.ReadByteSetting(device, CompxProtocol.LodAddress, out s))
+                {
+                    Cli.Write("读取失败：" + s.Error);
+                    Cli.Flush();
+                    return 1;
+                }
+
+                Cli.Write("原始（地址 " + CompxProtocol.LodAddress + " 起 2 字节）：" + Util.Hex(s.Raw, s.Raw.Length));
+                Cli.Write("当前响应高度：" + MouseSettings.LodLabel(s.Value)
+                    + "（EEPROM[" + CompxProtocol.LodAddress + "] = " + s.Value + "）");
+                Cli.Write("可选：" + string.Join(" / ", MouseSettings.LodLabels));
+                Cli.Flush();
+                return 0;
+            }
+
+            if (!MouseSettings.IsValidLod(lod))
+            {
+                Cli.Write("取值只能是 1 ~ " + MouseSettings.LodLabels.Length + "。");
+                Cli.Flush();
+                return 2;
+            }
+
+            string error;
+            bool ok = MouseSettings.WriteByteSetting(device, CompxProtocol.LodAddress, lod, out error);
+
+            ByteSetting after;
+            MouseSettings.ReadByteSetting(device, CompxProtocol.LodAddress, out after);
+            Cli.Write("把响应高度设为 " + MouseSettings.LodLabel(lod) + "：" + (ok ? "成功" : "失败（" + error + "）"));
+            if (after != null && after.Ok)
+                Cli.Write("回读：当前响应高度 " + MouseSettings.LodLabel(after.Value));
+            Cli.Flush();
+            return ok ? 0 : 1;
+        }
+
+        /// <summary>--competitive               读竞技模式；--competitive 0|1  设置。</summary>
+        private static int RunCompetitive(string[] args)
+        {
+            int code;
+            HidInterface device = RequireCompx(out code);
+            if (device == null) { Cli.Flush(); return code; }
+
+            Cli.Write("设备：" + device.VidPidHex + "  " + device.KindName);
+
+            string value = ValueOf(args, "--competitive");
+            int want = -1;
+            bool parsed = !string.IsNullOrEmpty(value) && int.TryParse(value, out want)
+                && (want == 0 || want == 1);
+
+            if (!parsed)
+            {
+                ByteSetting s;
+                if (!MouseSettings.ReadByteSetting(device, CompxProtocol.CompetitiveModeAddress, out s))
+                {
+                    Cli.Write("读取失败：" + s.Error);
+                    Cli.Flush();
+                    return 1;
+                }
+
+                Cli.Write("原始（地址 " + CompxProtocol.CompetitiveModeAddress + " 起 2 字节）：" + Util.Hex(s.Raw, s.Raw.Length));
+                Cli.Write("当前竞技模式：" + (s.Value == 1 ? "开" : "关")
+                    + "（EEPROM[" + CompxProtocol.CompetitiveModeAddress + "] = " + s.Value + "）");
+                Cli.Flush();
+                return 0;
+            }
+
+            string error;
+            bool ok = MouseSettings.WriteByteSetting(device, CompxProtocol.CompetitiveModeAddress, want, out error);
+
+            ByteSetting after;
+            MouseSettings.ReadByteSetting(device, CompxProtocol.CompetitiveModeAddress, out after);
+            Cli.Write("把竞技模式设为 " + (want == 1 ? "开" : "关") + "：" + (ok ? "成功" : "失败（" + error + "）"));
+            if (after != null && after.Ok)
+                Cli.Write("回读：当前竞技模式 " + (after.Value == 1 ? "开" : "关"));
+            Cli.Flush();
+            return ok ? 0 : 1;
+        }
+
         /// <summary>--eeprom &lt;地址&gt; [长度]   只读，打印 EEPROM 内容。</summary>
         private static int RunEeprom(string[] args)
         {
@@ -2374,7 +2642,7 @@ namespace GWMouseBattery
             {
                 if (reading.Ok)
                 {
-                    Cli.Write("G-Wolves 鼠标电量: " + reading.Percent + "%   "
+                    Cli.Write("G-Wolves Driver Tray: " + reading.Percent + "%   "
                         + (reading.Charging ? "充电中" : "未充电")
                         + "   " + Util.StateText(reading.Percent)
                         + (reading.VoltageMv > 0 ? "   电压 " + Util.FormatMv(reading.VoltageMv) : ""));
@@ -2527,7 +2795,7 @@ namespace GWMouseBattery
             // 而是让已经在跑的实例把详情窗口弹出来。
             if (WakeRunningInstance())
             {
-                Cli.Write("G-Wolves 鼠标电量已经在运行了。已让托盘程序打开详情窗口（看右下角通知区域）。");
+                Cli.Write("G-Wolves Driver Tray已经在运行了。已让托盘程序打开详情窗口（看右下角通知区域）。");
                 Cli.Write("如果看不到图标：点任务栏上的 ^ 展开隐藏图标，把图标拖出来即可常驻。");
                 Cli.Flush();
                 return 0;
@@ -2537,7 +2805,7 @@ namespace GWMouseBattery
             Mutex mutex = null;
             try
             {
-                mutex = new Mutex(true, "GWMouseBattery.SingleInstance", out created);
+                mutex = new Mutex(true, "G-Wolves-Driver-Tray.SingleInstance", out created);
             }
             catch
             {
@@ -2559,7 +2827,7 @@ namespace GWMouseBattery
                 // 而且关掉真正在工作的那个之后就再也没有电量显示了。
                 if (TryWakeWithRetries())
                 {
-                    Cli.Write("G-Wolves 鼠标电量已经在运行了。已让托盘程序打开详情窗口。");
+                    Cli.Write("G-Wolves Driver Tray已经在运行了。已让托盘程序打开详情窗口。");
                     Cli.Flush();
                     return 0;
                 }
@@ -2655,7 +2923,7 @@ namespace GWMouseBattery
         {
             return string.Join("\r\n", new string[]
             {
-                "G-Wolves 鼠标电量（托盘显示）",
+                "G-Wolves Driver Tray（托盘显示）",
                 "",
                 "  不带参数 / --tray   常驻托盘（双击 exe 就是这个）",
                 "  --probe             读一次电量并打印",
@@ -2669,6 +2937,10 @@ namespace GWMouseBattery
                 "  --dpi 1600          设置灵敏度（1 ~ 40000，任意值，无步进限制）",
                 "  --rate              读取回报率",
                 "  --rate 1000         设置回报率（125/250/500/1000/2000/4000/8000）",
+                "  --lod               读取响应高度（LOD）",
+                "  --lod 3             设置响应高度（1=0.7mm 2=0.9mm 3=1.2mm 4=1.4mm 5=1.6mm）",
+                "  --competitive       读取竞技模式",
+                "  --competitive 1     设置竞技模式（0=关 1=开）",
                 "  --eeprom <地址> [长度]  只读，打印鼠标 EEPROM 内容（排查用）",
                 "  --selftest          运行核心逻辑自检（不访问硬件）",
                 "  --shortcut          在桌面创建快捷方式",

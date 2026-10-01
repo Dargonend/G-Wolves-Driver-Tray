@@ -1,6 +1,6 @@
 @echo off
 rem ===========================================================================
-rem  GWMouseBattery launcher - plain ASCII + CRLF on purpose.
+rem  G-Wolves Driver Tray launcher - plain ASCII + CRLF on purpose.
 rem
 rem  cmd.exe re-reads a running batch file from disk while it executes, and it
 rem  assumes CRLF line endings. A non-ASCII byte or a bare LF makes it resume
@@ -21,13 +21,13 @@ title G-Wolves Mouse Battery
 
 set "HERE=%~dp0"
 set "MENU=%HERE%menu.txt"
-set "REPORT=%TEMP%\gwmouse-report.txt"
+set "REPORT=%TEMP%\gwtray-report.txt"
 
 rem Locate the exe without caring about the layout: packaged releases keep it
 rem right next to this script, the development tree keeps it in bin\.
 set "EXE="
-if exist "%HERE%GWMouseBattery.exe" set "EXE=%HERE%GWMouseBattery.exe"
-if not defined EXE if exist "%HERE%bin\GWMouseBattery.exe" set "EXE=%HERE%bin\GWMouseBattery.exe"
+if exist "%HERE%G-Wolves-Driver-Tray.exe" set "EXE=%HERE%G-Wolves-Driver-Tray.exe"
+if not defined EXE if exist "%HERE%bin\G-Wolves-Driver-Tray.exe" set "EXE=%HERE%bin\G-Wolves-Driver-Tray.exe"
 
 if not exist "%EXE%" goto :missing
 
@@ -69,7 +69,7 @@ goto :again
 
 :stop
 echo.
-taskkill /f /im GWMouseBattery.exe >nul 2>&1
+taskkill /f /im G-Wolves-Driver-Tray.exe >nul 2>&1
 if errorlevel 1 goto :stopnone
 echo   Stopped the running instance.
 ping -n 3 127.0.0.1 >nul
@@ -126,7 +126,7 @@ goto :menu
 
 :missing
 echo.
-echo   [ERROR] GWMouseBattery.exe was not found.
+echo   [ERROR] G-Wolves-Driver-Tray.exe was not found.
 echo   Keep it next to this launcher (or in a bin\ subfolder).
 echo.
 pause

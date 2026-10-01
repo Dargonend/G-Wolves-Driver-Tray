@@ -11,15 +11,15 @@ rem ===========================================================================
 
 setlocal EnableExtensions
 chcp 65001 >nul 2>&1
-title GWMouseBattery - sniff
+title G-Wolves-Driver-Tray - sniff
 cd /d "%~dp0"
 
 set "HERE=%~dp0"
 set "EXE="
-if exist "%HERE%GWMouseBattery.exe" set "EXE=%HERE%GWMouseBattery.exe"
-if not defined EXE if exist "%HERE%bin\GWMouseBattery.exe" set "EXE=%HERE%bin\GWMouseBattery.exe"
-if not defined EXE if exist "%HERE%..\GWMouseBattery.exe" set "EXE=%HERE%..\GWMouseBattery.exe"
-if not defined EXE if exist "%HERE%..\bin\GWMouseBattery.exe" set "EXE=%HERE%..\bin\GWMouseBattery.exe"
+if exist "%HERE%G-Wolves-Driver-Tray.exe" set "EXE=%HERE%G-Wolves-Driver-Tray.exe"
+if not defined EXE if exist "%HERE%bin\G-Wolves-Driver-Tray.exe" set "EXE=%HERE%bin\G-Wolves-Driver-Tray.exe"
+if not defined EXE if exist "%HERE%..\G-Wolves-Driver-Tray.exe" set "EXE=%HERE%..\G-Wolves-Driver-Tray.exe"
+if not defined EXE if exist "%HERE%..\bin\G-Wolves-Driver-Tray.exe" set "EXE=%HERE%..\bin\G-Wolves-Driver-Tray.exe"
 
 set "NOTE=%HERE%sniffnote.txt"
 if not exist "%NOTE%" if exist "%HERE%..\sniffnote.txt" set "NOTE=%HERE%..\sniffnote.txt"
@@ -33,7 +33,7 @@ echo   ------------------------------------------------------------
 echo.
 
 if not defined EXE (
-    echo   [ERROR] GWMouseBattery.exe was not found next to this script.
+    echo   [ERROR] G-Wolves-Driver-Tray.exe was not found next to this script.
     echo.
     pause
     exit /b 1

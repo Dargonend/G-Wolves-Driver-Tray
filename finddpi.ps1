@@ -19,14 +19,14 @@ if (Test-Path $Out) { $Out = (Resolve-Path $Out).Path }
 # diagnostics in tools\ and the exe at the package root).
 $exe = ""
 foreach ($cand in @(
-        (Join-Path $Out 'GWMouseBattery.exe'),
-        (Join-Path $Out 'bin\GWMouseBattery.exe'),
-        (Join-Path $Out '..\GWMouseBattery.exe'),
-        (Join-Path $Out '..\bin\GWMouseBattery.exe'))) {
+        (Join-Path $Out 'G-Wolves-Driver-Tray.exe'),
+        (Join-Path $Out 'bin\G-Wolves-Driver-Tray.exe'),
+        (Join-Path $Out '..\G-Wolves-Driver-Tray.exe'),
+        (Join-Path $Out '..\bin\G-Wolves-Driver-Tray.exe'))) {
     if (Test-Path $cand) { $exe = (Resolve-Path $cand).Path; break }
 }
 if ($exe -eq "") {
-    Write-Host "!! GWMouseBattery.exe not found near: $Out"
+    Write-Host "!! G-Wolves-Driver-Tray.exe not found near: $Out"
     exit 1
 }
 Write-Host ("exe  : " + $exe)

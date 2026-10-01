@@ -2,18 +2,21 @@
 #  release.ps1 - build the distributable package
 #
 #  Does the whole release in one go:
-#      compile -> self test -> assemble dist\GWMouseBattery-v<ver>\ -> zip
+#      compile -> self test -> assemble dist\G-Wolves-Driver-Tray-v<ver>\ -> zip
 #
 #  Usage:
 #      powershell -ExecutionPolicy Bypass -File release.ps1
-#      powershell -ExecutionPolicy Bypass -File release.ps1 -Version 1.0.1
+#      powershell -ExecutionPolicy Bypass -File release.ps1 -Version 1.2.0
 #      powershell -ExecutionPolicy Bypass -File release.ps1 -SkipBuild
+#
+#  The version defaults to whatever src\AssemblyInfo.cs declares, so the
+#  package name can never drift away from the version the exe reports.
 #
 #  Layout of the staged package (the exe deliberately sits at the TOP so that
 #  a downloader can just double-click it, instead of digging into bin\):
 #
-#      GWMouseBattery-v1.0.0\
-#          GWMouseBattery.exe
+#      G-Wolves-Driver-Tray-v<ver>\
+#          G-Wolves-Driver-Tray.exe
 #          使用说明.txt
 #          启动.bat  menu.txt
 #          README.md  协议说明.md
@@ -21,7 +24,7 @@
 #          source\   src\*.cs  build.ps1  app.ico  tools\makeicon.cs  docs\
 # ============================================================================
 
-param([string] $Version = '1.0.0', [switch] $SkipBuild)
+param([string] $Version = '', [switch] $SkipBuild)
 
 $ErrorActionPreference = 'Stop'
 
@@ -33,7 +36,21 @@ $root = $PSScriptRoot
 if (-not $root) { $root = Split-Path -Parent $MyInvocation.MyCommand.Path }
 
 $dist = Join-Path $root 'dist'
-$name = "GWMouseBattery-v$Version"
+
+# --- 0. version: default to what AssemblyInfo.cs says, so it cannot drift ---
+if (-not $Version) {
+    $asmPath = Join-Path $root 'src\AssemblyInfo.cs'
+    $asmText = [System.IO.File]::ReadAllText($asmPath, [System.Text.Encoding]::UTF8)
+    $m = [regex]::Match($asmText, 'AssemblyVersion\("([0-9]+)\.([0-9]+)\.([0-9]+)')
+    if (-not $m.Success) { throw "cannot read AssemblyVersion from $asmPath" }
+    $Version = "$($m.Groups[1].Value).$($m.Groups[2].Value).$($m.Groups[3].Value)"
+    Write-Host "version  : $Version  (from src\AssemblyInfo.cs)" -ForegroundColor Cyan
+}
+else {
+    Write-Host "version  : $Version  (from -Version)" -ForegroundColor Cyan
+}
+
+$name = "G-Wolves-Driver-Tray-v$Version"
 $pkg  = Join-Path $dist $name
 $zip  = Join-Path $dist "$name.zip"
 
@@ -44,7 +61,7 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { throw "build or self test failed (exit $LASTEXITCODE)" }
 }
 
-$exe = Join-Path $root 'bin\GWMouseBattery.exe'
+$exe = Join-Path $root 'bin\G-Wolves-Driver-Tray.exe'
 if (-not (Test-Path $exe)) { throw "missing $exe - run a build first" }
 
 # --- 2. fresh staging directory -------------------------------------------
@@ -60,7 +77,7 @@ if (Test-Path $pkg) {
         Write-Host '  The usual cause: the tray app is running FROM the packaging folder.'
         Write-Host '  Quit it first, then run this script again:'
         Write-Host ''
-        Write-Host '      GWMouseBattery.exe --quit'
+        Write-Host '      G-Wolves-Driver-Tray.exe --quit'
         Write-Host ''
         throw 'staging folder is locked'
     }

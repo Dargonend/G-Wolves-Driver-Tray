@@ -1,5 +1,5 @@
 ﻿// ============================================================================
-//  makeicon.cs - generates app.ico for GWMouseBattery
+//  makeicon.cs - generates app.ico for G-Wolves-Driver-Tray
 //
 //  One-off build helper. Compile with the .NET Framework 4.x csc.exe and run:
 //      csc /nologo /target:exe /out:makeicon.exe makeicon.cs
