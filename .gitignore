@@ -1,0 +1,17 @@
+# Build output. The release zip is published as a GitHub Release asset, not
+# committed - binaries in git bloat the repository and change on every build.
+bin/
+dist/
+
+# Scratch left behind by the diagnostic tools (contains your mouse's EEPROM
+# contents - harmless, but it is machine-specific noise).
+sniff.txt
+dpidiff.txt
+tmpdump-*.txt
+tmp-*.txt
+v.txt
+
+# Editor / IDE
+.vs/
+*.user
+*.suo

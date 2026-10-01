@@ -1,0 +1,32 @@
+# Make checkouts and "Download ZIP" behave exactly like the released package.
+#
+# The reason this file exists: cmd.exe re-reads a *running* batch file from
+# disk while it executes, and it assumes CRLF. A bare LF makes it resume in the
+# middle of a line and try to run word fragments as commands, which shows up as
+# a screenful of  'ery' is not recognized as an internal or external command.
+# Without these rules git would store the .bat files as LF and anybody who
+# grabbed the source zip would get broken launchers.
+#
+# The .exe that ships in the GitHub Release is an uploaded binary and is NOT
+# affected by any of this - only the repository contents are.
+
+* text=auto
+
+# cmd.exe launchers: must stay CRLF, always.
+*.bat text eol=crlf
+
+# Files printed with "type" under chcp 65001, or opened in Notepad.
+*.txt text eol=crlf
+
+# C# / PowerShell sources are UTF-8 *with* BOM on purpose: csc.exe and
+# PowerShell 5.1 decode them as ANSI/GBK when the BOM is missing, which turns
+# every Chinese string into garbage (and can even be a syntax error).
+# git preserves the BOM byte-for-byte; these rules only pin the line endings.
+*.cs  text eol=lf
+*.ps1 text eol=lf
+
+# Binaries: never touch, never diff, never "normalise".
+*.exe binary
+*.ico binary
+*.zip binary
+*.png binary
