@@ -53,7 +53,12 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 ## 许可
 
-按原样（AS IS）提供，不提供任何担保。使用风险自负 —— 本工具会向鼠标 EEPROM
+以 **MIT 许可证**发布，详见 [LICENSE](LICENSE)。
+
+**非官方工具**，与 G-Wolves 及其所有者无关联，未获其授权或认可；
+本项目不授予任何商标权，详见 [DISCLAIMER.md](DISCLAIMER.md)。
+
+按原样（AS IS）提供，不提供任何担保，使用风险自负 —— 本工具会向鼠标 EEPROM
 写入你主动点击的设置，每次写完都会立即回读校验。
 
 不联网、不收集、不上传任何数据。

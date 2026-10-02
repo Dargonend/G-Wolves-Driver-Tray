@@ -82,7 +82,7 @@ if (Test-Path $pkg) {
         throw 'staging folder is locked'
     }
 }
-foreach ($sub in @('', 'tools', 'source', 'source\src', 'source\tools', 'source\docs')) {
+foreach ($sub in @('', 'docs', 'tools', 'source', 'source\src', 'source\tools', 'source\docs')) {
     New-Item -ItemType Directory -Force -Path (Join-Path $pkg $sub) | Out-Null
 }
 
@@ -92,6 +92,13 @@ Copy-Item (Join-Path $root '启动.bat') $pkg -Force
 Copy-Item (Join-Path $root 'menu.txt') $pkg -Force
 Copy-Item (Join-Path $root 'README.md') $pkg -Force
 Copy-Item (Join-Path $root 'docs\协议说明.md') $pkg -Force
+# 根目录放一份是为了下载后一眼能看到；docs\ 下再放一份是为了让 README 里
+# 那个 "docs/协议说明.md" 相对链接在压缩包里也能点开（GitHub 上成立，包里也得成立）。
+Copy-Item (Join-Path $root 'docs\协议说明.md') (Join-Path $pkg 'docs') -Force
+# 许可证和免责声明必须跟着二进制一起发：MIT 要求副本里带上许可与版权声明，
+# 而且 README 里的 [LICENSE] / [DISCLAIMER.md] 相对链接在包里也得能点开。
+Copy-Item (Join-Path $root 'LICENSE')       $pkg -Force
+Copy-Item (Join-Path $root 'DISCLAIMER.md') $pkg -Force
 
 $toolDir = Join-Path $pkg 'tools'
 # the diagnostic scripts are renamed to ASCII: cmd.exe would need the Chinese
